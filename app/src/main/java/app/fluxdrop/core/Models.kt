@@ -7,7 +7,7 @@ const val TLS_PORT = 53530
 const val WEB_PORT = 53531
 const val DISCOVERY_PORT = 53532
 const val CHUNK_SIZE = 4 * 1024 * 1024
-const val APP_VERSION = "0.1.0"
+const val APP_VERSION = "0.1.1"
 
 @Serializable
 data class PeerInfo(

@@ -32,7 +32,14 @@ class AppGraph(val app: Application) {
         explicitNulls = false
     }
 
-    val identity by lazy { IdentityStore(app) }
+    val identity by lazy {
+        Diag.log("identity", "creating")
+        runCatching { IdentityStore(app) }.getOrElse { error ->
+            Diag.log("identity", "failed: $error")
+            Diag.dump("identity", error)
+            throw error
+        }.also { Diag.log("identity", "ready") }
+    }
     val settings by lazy { SettingsRepository(app) }
     val peers by lazy { PeerRepository(app, json) }
     val history by lazy { HistoryRepository(app, json) }
@@ -74,14 +81,17 @@ class AppGraph(val app: Application) {
     fun startRuntime() {
         if (runtimeActive.value) return
         runtimeActive.value = true
+        Diag.log("runtime", "start")
 
         runCatching { server.start() }
-        discovery.start()
+            .onFailure { Diag.log("runtime", "server failed: $it") }
+        runCatching { discovery.start() }
+            .onFailure { Diag.log("runtime", "discovery failed: $it") }
 
         pruneJob?.cancel()
         pruneJob = scope.launch {
             while (isActive) {
-                peers.prune()
+                runCatching { peers.prune() }
                 delay(5_000)
             }
         }
@@ -89,6 +99,7 @@ class AppGraph(val app: Application) {
 
     fun stopRuntime() {
         runtimeActive.value = false
+        Diag.log("runtime", "stop")
         pruneJob?.cancel()
         pruneJob = null
         discovery.stop()

@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 import app.fluxdrop.core.AppGraph
+import app.fluxdrop.core.Diag
 import app.fluxdrop.service.RadarService
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -19,8 +20,16 @@ class FluxApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        graph = AppGraph(this)
-        createChannels()
+        Diag.install(this)
+        Diag.log("app", "onCreate")
+
+        graph = runCatching { AppGraph(this) }.getOrElse { error ->
+            Diag.log("app", "graph failed: $error")
+            Diag.dump("graph", error)
+            throw error
+        }
+        Diag.log("app", "graph ready")
+        runCatching { createChannels() }.onFailure { Diag.log("app", "channels failed: $it") }
 
         registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: android.app.Activity) {
@@ -40,6 +49,7 @@ class FluxApp : Application() {
         })
 
         if (graph.settings.serviceEnabled.value) {
+            Diag.log("app", "starting radar service")
             RadarService.start(this)
         }
     }

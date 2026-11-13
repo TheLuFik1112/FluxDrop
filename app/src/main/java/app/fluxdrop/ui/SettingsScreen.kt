@@ -1,5 +1,6 @@
 package app.fluxdrop.ui
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.fluxdrop.core.APP_VERSION
+import app.fluxdrop.core.Diag
 import app.fluxdrop.core.TrustedPeer
 import app.fluxdrop.util.hasOverlayPermission
 import app.fluxdrop.util.isIgnoringBatteryOptimizations
@@ -196,6 +198,26 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+
+        SettingsCard("Диагностика") {
+            Text(
+                "Если приложение вылетает — сохраните отчёт и пришлите файл из папки Download/FluxDrop.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = {
+                    val path = Diag.dump("manual")
+                    Toast.makeText(
+                        context,
+                        path?.let { "Сохранено: $it" } ?: "Не удалось сохранить отчёт",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                },
+                shape = RoundedCornerShape(12.dp),
+            ) { Text("Сохранить отчёт") }
         }
 
         Spacer(Modifier.height(16.dp))

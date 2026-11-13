@@ -15,6 +15,7 @@ import app.fluxdrop.FluxApp
 import app.fluxdrop.MainActivity
 import app.fluxdrop.R
 import app.fluxdrop.core.AppGraph
+import app.fluxdrop.core.Diag
 
 /**
  * Постоянный фон: TLS-сервер, UDP/mDNS/BLE-обнаружение, приём передач.
@@ -27,9 +28,11 @@ class RadarService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Diag.log("service", "onCreate")
         graph = (application as FluxApp).graph
         acquireMulticastLock()
         startForegroundCompat(buildNotification(0))
+        Diag.log("service", "foreground started")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -37,7 +40,11 @@ class RadarService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        graph.startRuntime()
+        runCatching { graph.startRuntime() }
+            .onFailure {
+                Diag.log("service", "startRuntime failed: $it")
+                Diag.dump("runtime", it)
+            }
         updateNotification()
         return START_STICKY
     }

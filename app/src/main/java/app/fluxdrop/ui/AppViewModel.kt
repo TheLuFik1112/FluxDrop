@@ -8,6 +8,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.fluxdrop.FluxApp
+import app.fluxdrop.core.Diag
 import app.fluxdrop.core.PayloadBuilder
 import app.fluxdrop.core.QueueItem
 import app.fluxdrop.core.QueueKind
@@ -45,7 +46,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val portalUrl = MutableStateFlow<String?>(null)
 
     init {
+        Diag.log("viewmodel", "init")
         refreshPortal()
+        Diag.log("viewmodel", "ready")
     }
 
     fun consumeMessage() {

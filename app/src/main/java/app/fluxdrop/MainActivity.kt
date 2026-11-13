@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import app.fluxdrop.core.Diag
 import app.fluxdrop.ui.AppRoot
 import app.fluxdrop.ui.AppViewModel
 import app.fluxdrop.ui.FluxTheme
@@ -16,6 +17,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Diag.log("ui", "MainActivity.onCreate")
         enableEdgeToEdge()
         setContent {
             FluxTheme {
