@@ -191,7 +191,7 @@ class P2pLink(private val context: Context) {
         channel: WifiP2pManager.Channel,
     ): WifiP2pInfo? = suspendCancellableCoroutine { cont ->
         runCatching {
-            manager.requestGroupInfo(channel) { info ->
+            manager.requestConnectionInfo(channel) { info ->
                 if (cont.isActive) cont.resume(info?.takeIf { it.groupFormed })
             }
         }.onFailure { if (cont.isActive) cont.resume(null) }
