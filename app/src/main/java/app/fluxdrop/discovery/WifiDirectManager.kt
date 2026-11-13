@@ -10,8 +10,8 @@ import android.location.LocationManager
 import android.net.wifi.WpsInfo
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pDnsSdServiceInfo
-import android.net.wifi.p2p.WifiP2pDnsSdServiceRequest
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
 import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
@@ -249,7 +249,7 @@ class WifiDirectManager(
                         requestPeers(manager, channel)
                     }
                 },
-                { _, _, txt, source ->
+                { _, txt, source ->
                     if (source != null) {
                         val address = source.deviceAddress
                         val name = txt?.get("n")
@@ -533,12 +533,19 @@ class WifiDirectManager(
 
     fun release() {
         stopDiscovery()
-        runCatching { serviceRequest?.let { manager?.removeServiceRequest(channel, it, null) } }
+        val mgr = manager
+        val ch = channel
+        if (mgr != null && ch != null) {
+            val request = serviceRequest
+            if (request != null) {
+                runCatching { mgr.removeServiceRequest(ch, request, null) }
+            }
+            runCatching { mgr.removeGroup(ch, null) }
+        }
         serviceRequest = null
-        runCatching { manager?.removeGroup(channel, null) }
         runCatching { receiver?.let { appContext.unregisterReceiver(it) } }
         receiver = null
-        runCatching { channel?.close() }
+        runCatching { ch?.close() }
         channel = null
         connectionInfo = null
         peersByAddress.clear()

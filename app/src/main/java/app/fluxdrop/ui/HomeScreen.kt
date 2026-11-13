@@ -105,7 +105,7 @@ fun HomeScreen(
         if (p2pReadiness == WifiDirectReadiness.MISSING_PERMISSIONS ||
             p2pReadiness == WifiDirectReadiness.LOCATION_DISABLED
         ) {
-            item { P2pNotice(p2pReadiness = p2pReadiness, onFix = onFixP2p) }
+            item { P2pNotice(readiness = p2pReadiness, onFix = onFixP2p) }
         }
 
         item {
