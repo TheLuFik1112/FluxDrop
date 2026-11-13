@@ -81,7 +81,7 @@ class AppGraph(val app: Application) {
     /** Проверяет свой же сервер по TLS: relay → Ktor → маршрут → JSON. */
     fun probeServer(): String {
         val url = java.net.URL("https://127.0.0.1:$TLS_PORT/v1/info")
-        val (factory, _) = identity.clientSsl(identity.fingerprint)
+        val (factory, _) = identity.clientSsl(identity.identity.fingerprint)
         val connection = (url.openConnection() as javax.net.ssl.HttpsURLConnection).apply {
             sslSocketFactory = factory
             hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }

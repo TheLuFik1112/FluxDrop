@@ -52,7 +52,7 @@ class TransferClient(private val g: AppGraph) {
                     fingerprint,
                 )
             }
-            Diag.log("client", "offer to ${peer.ip}:${peer.port} -> ${offerResult.code}")
+            Diag.log("client", "offer to ${ip}:${peer.port} -> ${offerResult.code}")
             if (!offerResult.ok) {
                 val reason = runCatching {
                     g.json.decodeFromString(OfferResponse.serializer(), offerResult.text).reason
@@ -129,7 +129,7 @@ class TransferClient(private val g: AppGraph) {
                 )
             )
         }.onFailure { error ->
-            Diag.log("send", "failed to ${peer.name} ${peer.ip}:${peer.port}: $error")
+            Diag.log("send", "failed to ${peer.name} ${ip}:${peer.port}: $error")
             runCatching { Diag.dump("send", error) }
             g.history.add(
                 HistoryEntry(
