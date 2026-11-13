@@ -46,10 +46,8 @@ class TransferServer(private val g: AppGraph) {
     fun start() {
         if (server != null) return
 
-        val tls = TlsRelay(g.identity.serverSslContext(), TLS_PORT, TLS_LOCAL_PORT)
-        tls.start()
-        relay = tls
-
+        // Сначала HTTP-сервер на loopback, только потом внешний TLS-порт:
+        // ретранслятор не должен принимать соединения раньше, чем сервер готов.
         server = embeddedServer(
             factory = CIO,
             configure = {
@@ -64,6 +62,14 @@ class TransferServer(private val g: AppGraph) {
             },
             module = { module() },
         ).start(wait = false)
+
+        val tls = TlsRelay(
+            sslContext = g.identity.serverSslContext(),
+            listenPort = TLS_PORT,
+            upstreamPort = TLS_LOCAL_PORT,
+        )
+        tls.start()
+        relay = tls
     }
 
     fun stop() {

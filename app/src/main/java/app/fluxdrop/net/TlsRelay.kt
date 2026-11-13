@@ -11,14 +11,22 @@ import javax.net.ssl.SSLSocket
 
 /**
  * Ktor 3 CIO не умеет HTTPS, поэтому TLS-терминация вынесена в отдельный слой:
- * приложение слушает настоящий TLS-порт, расшифровывает поток и передаёт его
- * на loopback-порт, где работает обычный HTTP-сервер Ktor.
+ * приложение слушает внешний TLS-порт, расшифровывает поток и передаёт его
+ * на внутренний loopback-порт, где работает обычный HTTP-сервер Ktor.
+ *
+ * @param listenPort   внешний порт с TLS (его видят другие устройства)
+ * @param upstreamPort внутренний loopback-порт HTTP-сервера
  */
 class TlsRelay(
     private val sslContext: SSLContext,
     private val listenPort: Int,
-    private val localPort: Int,
+    private val upstreamPort: Int,
 ) {
+
+    init {
+        require(listenPort in 1..65535) { "listenPort out of range: $listenPort" }
+        require(upstreamPort in 1..65535) { "upstreamPort out of range: $upstreamPort" }
+    }
 
     private var serverSocket: SSLServerSocket? = null
     private var acceptor: Thread? = null
@@ -34,24 +42,12 @@ class TlsRelay(
         serverSocket = socket
         running = true
 
-        acceptor = Thread({
-            Diag.log("relay", "TLS listening on $listenPort -> 127.0.0.1:$localPort")
-            while (running) {
-                val client = try {
-                    socket.accept()
-                } catch (error: Exception) {
-                    if (running) Diag.log("relay", "accept failed: $error")
-                    break
-                }
-                Thread({ handle(client) }, "fluxdrop-tls-conn").apply {
-                    isDaemon = true
-                    start()
-                }
-            }
-        }, "fluxdrop-tls").apply {
+        acceptor = Thread({ acceptLoop(socket) }, "fluxdrop-tls").apply {
             isDaemon = true
             start()
         }
+
+        Diag.log("relay", "TLS $listenPort -> 127.0.0.1:$upstreamPort")
     }
 
     fun stop() {
@@ -62,40 +58,41 @@ class TlsRelay(
         acceptor = null
     }
 
+    private fun acceptLoop(socket: SSLServerSocket) {
+        while (running) {
+            val client = try {
+                socket.accept()
+            } catch (error: Exception) {
+                if (running) Diag.log("relay", "accept failed: $error")
+                break
+            }
+            val worker = Thread({ handle(client) }, "fluxdrop-tls-conn")
+            worker.isDaemon = true
+            worker.start()
+        }
+    }
+
     private fun handle(client: Socket) {
         var upstream: Socket? = null
-        var step = "begin"
         try {
-            step = "inspect"
-            Diag.log(
-                "relay",
-                "conn in: local=$localPort remote=${client.inetAddress?.hostAddress}:${client.port} " +
-                    "connected=${client.isConnected} ssl=${client is SSLSocket}",
-            )
-
-            step = "handshake"
-            (client as? SSLSocket)?.let { ssl ->
+            val ssl = client as? SSLSocket
+            if (ssl != null) {
                 ssl.useClientMode = false
                 ssl.startHandshake()
             }
-            Diag.log("relay", "handshake ok")
 
-            step = "connect upstream"
-            upstream = Socket().apply {
-                connect(InetSocketAddress("127.0.0.1", localPort), 5_000)
-                tcpNoDelay = true
-            }
-            Diag.log("relay", "upstream connected")
+            val target = Socket()
+            target.connect(InetSocketAddress("127.0.0.1", upstreamPort), 5_000)
+            target.tcpNoDelay = true
+            upstream = target
 
-            val target = upstream
-            step = "pump"
-            Thread({ pump(client, target) }, "fluxdrop-tls-up").apply {
-                isDaemon = true
-                start()
-            }
+            val back = Thread({ pump(client, target) }, "fluxdrop-tls-up")
+            back.isDaemon = true
+            back.start()
+
             pump(target, client)
         } catch (error: Exception) {
-            Diag.log("relay", "failed at $step: ${error.stackTraceToString()}")
+            Diag.log("relay", "connection failed: ${error.javaClass.simpleName}: ${error.message}")
         } finally {
             runCatching { upstream?.close() }
             runCatching { client.close() }

@@ -80,6 +80,17 @@ class AppGraph(val app: Application) {
 
     /** Проверяет свой же сервер по TLS: relay → Ktor → маршрут → JSON. */
     fun probeServer(): String {
+        var last: Throwable? = null
+        for (attempt in 1..3) {
+            val result = runCatching { probeOnce() }
+            result.getOrNull()?.let { return it }
+            last = result.exceptionOrNull()
+            if (attempt < 3) Thread.sleep(400L * attempt)
+        }
+        throw last ?: IllegalStateException("нет соединения")
+    }
+
+    private fun probeOnce(): String {
         val url = java.net.URL("https://127.0.0.1:$TLS_PORT/v1/info")
         val (factory, _) = identity.clientSsl(identity.identity.fingerprint)
         val connection = (url.openConnection() as javax.net.ssl.HttpsURLConnection).apply {
