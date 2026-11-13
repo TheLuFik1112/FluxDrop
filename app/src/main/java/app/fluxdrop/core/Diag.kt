@@ -22,11 +22,14 @@ object Diag {
     private val lines = ArrayDeque<String>()
     private var appContext: Context? = null
     private var installed = false
+    private var logStream: java.io.OutputStream? = null
 
     fun install(context: Context) {
         appContext = context.applicationContext
         if (installed) return
         installed = true
+
+        openLogFile(context)
 
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
@@ -43,6 +46,45 @@ object Diag {
         synchronized(lines) {
             lines.addLast(line)
             while (lines.size > MAX_LINES) lines.removeFirst()
+        }
+        writeLine(line)
+    }
+
+    /** Журнал прошлой сессии — чтобы понять, что было при старте, даже без падения. */
+    private fun openLogFile(context: Context) {
+        runCatching {
+            val name = "log-${fileStamp()}.txt".replace(":", "-").replace(" ", "_")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                    put(
+                        MediaStore.MediaColumns.RELATIVE_PATH,
+                        Environment.DIRECTORY_DOWNLOADS + File.separator + FOLDER,
+                    )
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                logStream = uri?.let { resolver.openOutputStream(it, "wa") }
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    FOLDER,
+                )
+                dir.mkdirs()
+                logStream = File(dir, name).outputStream()
+            }
+        }
+    }
+
+    private fun writeLine(line: String) {
+        val stream = logStream ?: return
+        runCatching {
+            synchronized(this) {
+                stream.write((line + "\n").toByteArray())
+                stream.flush()
+            }
         }
     }
 
@@ -76,6 +118,7 @@ object Diag {
         }
 
         val name = "fluxdrop-$kind-${fileStamp()}.txt".replace(":", "-").replace(" ", "_")
+        runCatching { writeLine(body) }
         return runCatching { save(context, name, body) }.getOrElse { io ->
             log("diag", "save failed: $io")
             runCatching {

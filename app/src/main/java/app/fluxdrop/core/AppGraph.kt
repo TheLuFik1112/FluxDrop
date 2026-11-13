@@ -78,6 +78,26 @@ class AppGraph(val app: Application) {
         )
     }
 
+    /** Проверяет свой же сервер по TLS: relay → Ktor → маршрут → JSON. */
+    fun probeServer(): String {
+        val url = java.net.URL("https://127.0.0.1:$TLS_PORT/v1/info")
+        val (factory, _) = identity.clientSsl(identity.fingerprint)
+        val connection = (url.openConnection() as javax.net.ssl.HttpsURLConnection).apply {
+            sslSocketFactory = factory
+            hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+            connectTimeout = 5_000
+            readTimeout = 8_000
+        }
+        return try {
+            val code = connection.responseCode
+            val text = (if (code in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()?.use { it.readText() }.orEmpty()
+            "HTTP $code ${text.take(90)}"
+        } finally {
+            runCatching { connection.disconnect() }
+        }
+    }
+
     fun startRuntime() {
         if (runtimeActive.value) return
         runtimeActive.value = true
@@ -87,6 +107,13 @@ class AppGraph(val app: Application) {
             .onFailure { Diag.log("runtime", "server failed: $it") }
         runCatching { discovery.start() }
             .onFailure { Diag.log("runtime", "discovery failed: $it") }
+
+        scope.launch {
+            delay(700)
+            runCatching { probeServer() }
+                .onSuccess { Diag.log("probe", "self-check ok: $it") }
+                .onFailure { Diag.log("probe", "self-check failed: $it") }
+        }
 
         pruneJob?.cancel()
         pruneJob = scope.launch {

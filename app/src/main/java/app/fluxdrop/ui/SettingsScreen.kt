@@ -207,17 +207,23 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(10.dp))
-            OutlinedButton(
-                onClick = {
-                    val path = Diag.dump("manual")
-                    Toast.makeText(
-                        context,
-                        path?.let { "Сохранено: $it" } ?: "Не удалось сохранить отчёт",
-                        Toast.LENGTH_LONG,
-                    ).show()
-                },
-                shape = RoundedCornerShape(12.dp),
-            ) { Text("Сохранить отчёт") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { viewModel.checkServer() },
+                    shape = RoundedCornerShape(12.dp),
+                ) { Text("Проверить сервер") }
+                OutlinedButton(
+                    onClick = {
+                        val path = Diag.dump("manual")
+                        Toast.makeText(
+                            context,
+                            path?.let { "Сохранено: $it" } ?: "Не удалось сохранить отчёт",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                ) { Text("Сохранить отчёт") }
+            }
         }
 
         Spacer(Modifier.height(16.dp))

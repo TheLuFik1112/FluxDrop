@@ -3,6 +3,7 @@ package app.fluxdrop.net
 import android.content.ClipData
 import app.fluxdrop.core.AppGraph
 import app.fluxdrop.core.BuiltPayload
+import app.fluxdrop.core.Diag
 import app.fluxdrop.core.FileMeta
 import app.fluxdrop.core.HistoryEntry
 import app.fluxdrop.core.IdentityStore
@@ -44,11 +45,14 @@ class TransferClient(private val g: AppGraph) {
             val offer = signedOffer(transferId, built.payload)
             onProgress(0f, "Ждём подтверждения на ${peer.name}…")
 
-            val offerResult = request(
-                ip, peer.port, "POST", "/v1/offer",
-                g.json.encodeToString(TransferOffer.serializer(), offer).encodeToByteArray(),
-                fingerprint,
-            )
+            val offerResult = retryIo(3) {
+                request(
+                    ip, peer.port, "POST", "/v1/offer",
+                    g.json.encodeToString(TransferOffer.serializer(), offer).encodeToByteArray(),
+                    fingerprint,
+                )
+            }
+            Diag.log("client", "offer to ${peer.ip}:${peer.port} -> ${offerResult.code}")
             if (!offerResult.ok) {
                 val reason = runCatching {
                     g.json.decodeFromString(OfferResponse.serializer(), offerResult.text).reason
@@ -125,6 +129,8 @@ class TransferClient(private val g: AppGraph) {
                 )
             )
         }.onFailure { error ->
+            Diag.log("send", "failed to ${peer.name} ${peer.ip}:${peer.port}: $error")
+            runCatching { Diag.dump("send", error) }
             g.history.add(
                 HistoryEntry(
                     id = transferId,
@@ -137,8 +143,39 @@ class TransferClient(private val g: AppGraph) {
                     status = "failed",
                 )
             )
-            onProgress(0f, error.message ?: "Ошибка передачи")
+            onProgress(0f, friendlyError(error))
         }
+    }
+
+    private fun friendlyError(error: Throwable): String {
+        val text = error.message.orEmpty()
+        val looksLikeDrop = listOf(
+            "unexpected end of stream",
+            "Connection reset",
+            "Broken pipe",
+            "refused",
+            "failed to connect",
+            "timeout",
+            "timed out",
+        ).any { text.contains(it, ignoreCase = true) }
+        return if (looksLikeDrop) {
+            "Устройство не отвечает. Проверьте, что на нём установлена версия 0.1.2 " +
+                "и включена «Служба обнаружения»."
+        } else {
+            text.ifBlank { "Ошибка передачи" }
+        }
+    }
+
+    private fun <T> retryIo(times: Int, block: () -> T): T {
+        var lastError: Throwable? = null
+        for (attempt in 1..times) {
+            val result = runCatching(block)
+            result.getOrNull()?.let { return it }
+            lastError = result.exceptionOrNull()
+            Diag.log("client", "attempt $attempt failed: $lastError")
+            if (attempt < times) Thread.sleep(400L * attempt)
+        }
+        throw lastError ?: IllegalStateException("нет соединения")
     }
 
     suspend fun sendText(peer: PeerInfo, ip: String, text: String): Result<Unit> =

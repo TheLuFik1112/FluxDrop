@@ -161,6 +161,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun checkServer() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching { g.probeServer() }
+                .getOrElse { "Ошибка: ${it.javaClass.simpleName}: ${it.message}" }
+            Diag.log("probe", "manual check: $result")
+            withContext(Dispatchers.Main) { message.value = result }
+        }
+    }
+
     fun setDeviceName(name: String) {
         g.settings.setDeviceName(name)
     }
