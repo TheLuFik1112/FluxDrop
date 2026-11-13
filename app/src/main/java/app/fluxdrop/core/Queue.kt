@@ -1,10 +1,12 @@
 package app.fluxdrop.core
 
 import android.net.Uri
+import androidx.compose.runtime.Immutable
 import java.util.UUID
 
 enum class QueueKind { TEXT, FILE, FOLDER }
 
+@Immutable
 data class QueueItem(
     val id: String = UUID.randomUUID().toString(),
     val kind: QueueKind,

@@ -1,6 +1,7 @@
 package app.fluxdrop.data
 
 import android.content.Context
+import androidx.compose.runtime.Immutable
 import app.fluxdrop.core.PeerInfo
 import app.fluxdrop.core.TrustedPeer
 import app.fluxdrop.core.IdentityStore
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
+@Immutable
 data class DiscoveredPeer(
     val info: PeerInfo,
     val ip: String,

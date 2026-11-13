@@ -1,6 +1,7 @@
 package app.fluxdrop.ui
 
 import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,11 +16,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,8 +35,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,7 +46,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.fluxdrop.core.APP_VERSION
-import app.fluxdrop.core.Diag
 import app.fluxdrop.core.TrustedPeer
 import app.fluxdrop.util.hasOverlayPermission
 import app.fluxdrop.util.isIgnoringBatteryOptimizations
@@ -61,10 +65,17 @@ fun SettingsScreen(
     val serviceEnabled by viewModel.serviceEnabled.collectAsState()
     val autoAccept by viewModel.autoAccept.collectAsState()
     val portalEnabled by viewModel.portalEnabled.collectAsState()
+    val developerMode by viewModel.developerMode.collectAsState()
+    val autoSendReports by viewModel.autoSendReports.collectAsState()
 
-    var renameOpen by remember { mutableStateOf(false) }
+    var renameOpen by rememberSaveable { mutableStateOf(false) }
+    var statsOpen by rememberSaveable { mutableStateOf(false) }
     var overlayGranted by remember { mutableStateOf(hasOverlayPermission(context)) }
     var batteryOk by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+
+    // Пасхалка: 7 быстрых нажатий на номер версии открывают раздел для разработчиков.
+    var taps by rememberSaveable { mutableStateOf(0) }
+    var lastTapAt by remember { mutableLongStateOf(0L) }
 
     Column(
         modifier = Modifier
@@ -129,6 +140,19 @@ fun SettingsScreen(
             )
         }
 
+        SettingsCard("Отчёты об ошибках") {
+            SwitchRow(
+                title = "Автоматически отправлять отчёты об ошибках разработчику",
+                subtitle = if (autoSendReports) {
+                    "При сбое отчёт уйдёт в фоне, без лишних окон"
+                } else {
+                    "При сбое появится окно с предложением отправить логи"
+                },
+                checked = autoSendReports,
+                onCheckedChange = viewModel::setAutoSendReports,
+            )
+        }
+
         SettingsCard("Доверенные устройства") {
             if (trusted.none { !it.revoked }) {
                 Text(
@@ -190,8 +214,53 @@ fun SettingsScreen(
         }
 
         SettingsCard("О приложении") {
-            Text("FluxDrop $APP_VERSION", style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(4.dp))
+            // Пасхалка: 7 быстрых нажатий по строке версии открывают раздел для разработчиков.
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (developerMode) return@clickable
+                            val now = System.currentTimeMillis()
+                            taps = if (now - lastTapAt > 1_500) 1 else taps + 1
+                            lastTapAt = now
+                            if (taps >= 7) {
+                                taps = 0
+                                viewModel.setDeveloperMode(true)
+                                Toast.makeText(
+                                    context,
+                                    "Режим разработчика включён",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            } else if (taps >= 4) {
+                                Toast.makeText(context, "Ещё ${7 - taps}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("FluxDrop", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Версия $APP_VERSION",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (developerMode) {
+                        Text(
+                            "режим разработчика",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
             Text(
                 "Локальная передача: TLS + подпись запросов, файлы чанками 4 МБ с SHA-256, " +
                     "доверенные устройства — по отпечатку ключа.",
@@ -200,29 +269,63 @@ fun SettingsScreen(
             )
         }
 
-        SettingsCard("Диагностика") {
-            Text(
-                "Если приложение вылетает — сохраните отчёт и пришлите файл из папки Download/FluxDrop.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { viewModel.checkServer() },
-                    shape = RoundedCornerShape(12.dp),
-                ) { Text("Проверить сервер") }
-                OutlinedButton(
+        if (developerMode) {
+            SettingsCard("Для разработчиков") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Rounded.BugReport,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Технические проверки и журналы",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { viewModel.checkServer() },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Проверить сервер") }
+                    OutlinedButton(
+                        onClick = { viewModel.saveLogs() },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Сохранить логи") }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { viewModel.restartServer() },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Перезапуск релея") }
+                    OutlinedButton(
+                        onClick = { statsOpen = true },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Статистика") }
+                }
+                Spacer(Modifier.height(10.dp))
+                TextButton(
                     onClick = {
-                        val path = Diag.dump("manual")
-                        Toast.makeText(
-                            context,
-                            path?.let { "Сохранено: $it" } ?: "Не удалось сохранить отчёт",
-                            Toast.LENGTH_LONG,
-                        ).show()
+                        viewModel.setDeveloperMode(false)
+                        Toast.makeText(context, "Режим разработчика выключен", Toast.LENGTH_SHORT).show()
                     },
-                    shape = RoundedCornerShape(12.dp),
-                ) { Text("Сохранить отчёт") }
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Скрыть раздел") }
             }
         }
 
@@ -253,6 +356,22 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { renameOpen = false }) { Text("Отмена") }
+            },
+        )
+    }
+
+    if (statsOpen) {
+        AlertDialog(
+            onDismissRequest = { statsOpen = false },
+            title = { Text("Сетевая статистика") },
+            text = {
+                Text(
+                    viewModel.serverStats(),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { statsOpen = false }) { Text("Закрыть") }
             },
         )
     }

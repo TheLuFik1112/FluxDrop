@@ -67,7 +67,7 @@ fun HomeScreen(
 ) {
     var showTextDialog by remember { mutableStateOf(false) }
     val portalUrl by viewModel.portalUrl.collectAsState()
-    val trustedPeers by viewModel.trusted.collectAsState()
+    val trustedIds by viewModel.trustedIds.collectAsState()
     val deviceName by viewModel.deviceName.collectAsState()
 
     LazyColumn(
@@ -118,8 +118,9 @@ fun HomeScreen(
                         Text("Пока никого не видно", style = MaterialTheme.typography.bodyLarge)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Откройте FluxDrop на втором устройстве в той же Wi-Fi сети. " +
-                                "Bluetooth помогает найти устройство, но для передачи нужна общая сеть.",
+                            "Откройте FluxDrop на втором устройстве рядом. " +
+                                "Общая Wi-Fi сеть не обязательна: если её нет, приложение " +
+                                "подключится напрямую по Wi-Fi Direct.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -131,7 +132,7 @@ fun HomeScreen(
         items(peers, key = { it.info.id }) { peer ->
             PeerRow(
                 peer = peer,
-                trusted = trustedPeers.any { it.id == peer.info.id && !it.revoked },
+                trusted = peer.info.id in trustedIds,
                 enabled = queue.isNotEmpty() && sending == null && peer.canSend,
                 onSend = { viewModel.sendTo(peer) },
             )
@@ -236,9 +237,10 @@ private fun QueueCard(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
+                val totalBytes = remember(queue) { queue.sumOf { it.size } }
                 if (queue.isNotEmpty()) {
                     Text(
-                        formatBytes(queue.sumOf { it.size }),
+                        formatBytes(totalBytes),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

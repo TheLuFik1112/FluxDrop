@@ -1,5 +1,6 @@
 package app.fluxdrop.core
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -8,9 +9,10 @@ const val WEB_PORT = 53531
 const val DISCOVERY_PORT = 53532
 const val TLS_LOCAL_PORT = 53533
 const val CHUNK_SIZE = 4 * 1024 * 1024
-const val APP_VERSION = "0.1.5"
+const val APP_VERSION = "0.2.0"
 
 @Serializable
+@Immutable
 data class PeerInfo(
     val id: String,
     val name: String,
@@ -23,6 +25,7 @@ data class PeerInfo(
 
 /** Минимальный пакет для UDP/mDNS/BLE — без сертификата, чтобы не фрагментировать датаграмму. */
 @Serializable
+@Immutable
 data class Beacon(
     val id: String,
     val name: String,
@@ -33,6 +36,7 @@ data class Beacon(
 )
 
 @Serializable
+@Immutable
 data class FileMeta(
     val index: Int,
     val path: String,
@@ -129,6 +133,7 @@ data class TransferResult(val ok: Boolean, val reason: String = "")
 data class ResumeState(val received: List<Int>)
 
 @Serializable
+@Immutable
 data class TrustedPeer(
     val id: String,
     val name: String,
@@ -143,6 +148,7 @@ data class TrustedPeer(
 )
 
 @Serializable
+@Immutable
 data class HistoryEntry(
     val id: String,
     val direction: String,          // "out" | "in"

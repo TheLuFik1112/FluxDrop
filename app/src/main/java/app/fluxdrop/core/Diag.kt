@@ -130,6 +130,17 @@ object Diag {
         }
     }
 
+    /** Последние строки журнала — без обращения к файлам. */
+    fun recentLines(count: Int = 200): String = synchronized(lines) {
+        lines.takeLast(count).joinToString("\n")
+    }
+
+    /** Сохраняет готовый текст в папку Download/FluxDrop (или в приватный каталог). */
+    fun saveText(name: String, body: String): String? {
+        val context = appContext ?: return null
+        return runCatching { save(context, name, body) }.getOrNull()
+    }
+
     private fun save(context: Context, name: String, body: String): String? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {

@@ -16,8 +16,8 @@ android {
         applicationId = "app.fluxdrop"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "0.2.0"
     }
 
     buildTypes {
@@ -77,6 +77,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.activity:activity-ktx:1.10.0")
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.documentfile:documentfile:1.0.1")

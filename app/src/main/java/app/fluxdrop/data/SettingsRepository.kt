@@ -16,6 +16,8 @@ class SettingsRepository(private val context: Context) {
     val autoAcceptTrusted = MutableStateFlow(prefs.getBoolean(KEY_AUTO, true))
     val portalEnabled = MutableStateFlow(prefs.getBoolean(KEY_PORTAL, false))
     val overlayPromptShown = MutableStateFlow(prefs.getBoolean(KEY_OVERLAY_PROMPT, false))
+    val developerMode = MutableStateFlow(prefs.getBoolean(KEY_DEVELOPER, false))
+    val autoSendReports = MutableStateFlow(prefs.getBoolean(KEY_AUTO_REPORTS, false))
 
     fun setDeviceName(value: String) {
         val clean = value.trim().take(40).ifBlank { defaultName }
@@ -43,6 +45,16 @@ class SettingsRepository(private val context: Context) {
         prefs.edit().putBoolean(KEY_OVERLAY_PROMPT, true).apply()
     }
 
+    fun setDeveloperMode(value: Boolean) {
+        developerMode.value = value
+        prefs.edit().putBoolean(KEY_DEVELOPER, value).apply()
+    }
+
+    fun setAutoSendReports(value: Boolean) {
+        autoSendReports.value = value
+        prefs.edit().putBoolean(KEY_AUTO_REPORTS, value).apply()
+    }
+
     fun portalToken(): String =
         prefs.getString(KEY_TOKEN, null) ?: newToken().also {
             prefs.edit().putString(KEY_TOKEN, it).apply()
@@ -62,5 +74,7 @@ class SettingsRepository(private val context: Context) {
         const val KEY_PORTAL = "portal_enabled"
         const val KEY_TOKEN = "portal_token"
         const val KEY_OVERLAY_PROMPT = "overlay_prompt"
+        const val KEY_DEVELOPER = "developer_mode"
+        const val KEY_AUTO_REPORTS = "auto_send_reports"
     }
 }

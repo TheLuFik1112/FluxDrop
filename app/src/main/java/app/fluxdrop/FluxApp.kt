@@ -4,9 +4,12 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import android.os.SystemClock
 import app.fluxdrop.core.AppGraph
+import app.fluxdrop.core.CrashReporter
 import app.fluxdrop.core.Diag
 import app.fluxdrop.service.RadarService
+import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicInteger
 
 class FluxApp : Application() {
@@ -20,16 +23,13 @@ class FluxApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
         Diag.install(this)
+        CrashReporter.install(this)
         Diag.log("app", "onCreate")
 
-        graph = runCatching { AppGraph(this) }.getOrElse { error ->
-            Diag.log("app", "graph failed: $error")
-            Diag.dump("graph", error)
-            throw error
-        }
-        Diag.log("app", "graph ready")
-        runCatching { createChannels() }.onFailure { Diag.log("app", "channels failed: $it") }
+        // Граф создаётся мгновенно: внутри только ленивые поля, никакой работы.
+        graph = AppGraph(this)
 
         registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: android.app.Activity) {
@@ -48,15 +48,29 @@ class FluxApp : Application() {
             override fun onActivityDestroyed(activity: android.app.Activity) = Unit
         })
 
+        // Каналы уведомлений нужны до старта службы и стоят доли миллисекунды.
+        runCatching { createChannels() }
+            .onFailure { Diag.log("app", "channels failed: $it") }
+
         if (graph.settings.serviceEnabled.value) {
             Diag.log("app", "starting radar service")
-            RadarService.start(this)
+            runCatching { RadarService.start(this) }
+                .onFailure { Diag.log("app", "service start failed: $it") }
+        }
+
+        // Тяжёлая инициализация (ключи, сертификат, префы, сокеты) — только в фоне,
+        // чтобы первый кадр UI появлялся сразу.
+        graph.scope.launch {
+            val startedAt = SystemClock.elapsedRealtime()
+            runCatching { graph.warmUp() }
+                .onFailure { Diag.log("app", "warmUp failed: $it") }
+            Diag.log("app", "warmUp ${SystemClock.elapsedRealtime() - startedAt} ms")
         }
     }
 
     private fun createChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val nm = getSystemService(NotificationManager::class.java)
+        val nm = getSystemService(NotificationManager::class.java) ?: return
 
         nm.createNotificationChannel(
             NotificationChannel(

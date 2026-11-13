@@ -16,6 +16,7 @@ import app.fluxdrop.MainActivity
 import app.fluxdrop.R
 import app.fluxdrop.core.AppGraph
 import app.fluxdrop.core.Diag
+import kotlinx.coroutines.launch
 
 /**
  * Постоянный фон: TLS-сервер, UDP/mDNS/BLE-обнаружение, приём передач.
@@ -40,12 +41,16 @@ class RadarService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        runCatching { graph.startRuntime() }
-            .onFailure {
-                Diag.log("service", "startRuntime failed: $it")
-                Diag.dump("runtime", it)
-            }
-        updateNotification()
+        // Всё тяжёлое (ключи, сертификат, сокеты, обнаружение) — в фоне:
+        // onStartCommand нельзя задерживать, иначе белый экран и ANR.
+        graph.scope.launch {
+            runCatching { graph.startRuntime() }
+                .onFailure {
+                    Diag.log("service", "startRuntime failed: $it")
+                    Diag.dump("runtime", it)
+                }
+            updateNotification()
+        }
         return START_STICKY
     }
 

@@ -4,12 +4,15 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.runtime.Immutable
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.fluxdrop.FluxApp
+import app.fluxdrop.core.CrashReporter
 import app.fluxdrop.core.Diag
 import app.fluxdrop.core.PayloadBuilder
+import app.fluxdrop.core.PendingCrash
 import app.fluxdrop.core.QueueItem
 import app.fluxdrop.core.QueueKind
 import app.fluxdrop.data.DiscoveredPeer
@@ -17,9 +20,15 @@ import app.fluxdrop.net.PortalFile
 import app.fluxdrop.service.RadarService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+@Immutable
 data class SendState(
     val peerName: String,
     val fraction: Float,
@@ -35,20 +44,68 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val serviceEnabled = g.settings.serviceEnabled
     val autoAccept = g.settings.autoAcceptTrusted
     val portalEnabled = g.settings.portalEnabled
+    val developerMode = g.settings.developerMode
+    val autoSendReports = g.settings.autoSendReports
 
     val peers = g.peers.discovered
     val trusted = g.peers.trusted
     val history = g.history.entries
+
+    val serverState = g.serverState
+    val lastSelfCheck = g.lastSelfCheck
+
+    /** Множество id доверенных устройств: пересчитывается только при реальном изменении. */
+    val trustedIds: StateFlow<Set<String>> = g.peers.trusted
+        .map { list -> list.filterNot { it.revoked }.map { it.id }.toSet() }
+        .distinctUntilChanged()
+        .stateIn(g.scope, SharingStarted.Eagerly, emptySet())
 
     val queue = MutableStateFlow<List<QueueItem>>(emptyList())
     val sending = MutableStateFlow<SendState?>(null)
     val message = MutableStateFlow<String?>(null)
     val portalUrl = MutableStateFlow<String?>(null)
 
+    private val _crash = MutableStateFlow<PendingCrash?>(null)
+    val crash: StateFlow<PendingCrash?> = _crash
+
     init {
         Diag.log("viewmodel", "init")
-        refreshPortal()
-        Diag.log("viewmodel", "ready")
+        // Ничего тяжёлого в конструкторе: чтение отчёта и портала — в фоне.
+        g.scope.launch {
+            loadPendingCrash()
+            refreshPortal()
+            Diag.log("viewmodel", "ready")
+        }
+    }
+
+    private fun loadPendingCrash() {
+        val pending = runCatching { CrashReporter.pending(context) }.getOrNull() ?: return
+        if (g.settings.autoSendReports.value) {
+            val sent = runCatching { CrashReporter.send(context, pending) }.getOrNull()
+            CrashReporter.clear(context)
+            message.value = if (sent != null) {
+                "Отчёт о сбое отправлен разработчику"
+            } else {
+                "Не удалось отправить отчёт о сбое"
+            }
+        } else {
+            _crash.value = pending
+        }
+    }
+
+    fun dismissCrash() {
+        _crash.value = null
+        CrashReporter.clear(context)
+    }
+
+    fun sendCrash() {
+        val report = _crash.value ?: return
+        _crash.value = null
+        g.scope.launch {
+            val path = runCatching { CrashReporter.send(context, report) }.getOrNull()
+            CrashReporter.clear(context)
+            message.value = if (path != null) "Логи сохранены: $path" else "Не удалось отправить логи"
+        }
     }
 
     fun consumeMessage() {
@@ -131,10 +188,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             message.value = "Уже идёт передача"
             return
         }
-        if (peer.ip.isBlank()) {
-            message.value = "Устройство найдено по Bluetooth, но не в сети — включите Wi-Fi"
-            return
-        }
 
         viewModelScope.launch {
             val built = withContext(Dispatchers.Default) {
@@ -145,10 +198,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            sending.value = SendState(peer.info.name, 0f, "Подключение…")
-            val result = g.client.send(peer.info, peer.ip, built) { fraction, text ->
+            val progress: (Float, String) -> Unit = { fraction, text ->
                 sending.value = SendState(peer.info.name, fraction, text)
             }
+
+            sending.value = SendState(peer.info.name, 0f, "Подключение…")
+            var result = if (peer.ip.isBlank()) {
+                Result.failure(java.io.IOException("нет общего Wi-Fi"))
+            } else {
+                g.client.send(peer.info, peer.ip, built, progress)
+            }
+
+            // Обычный путь не сработал — поднимаем прямое Wi-Fi Direct соединение (без роутера).
+            if (result.isFailure && shouldTryP2p(result.exceptionOrNull())) {
+                sending.value = SendState(peer.info.name, 0f, "Прямое соединение…")
+                val directIp = runCatching { g.p2p.ensureLink(peer.info.name) }.getOrNull()
+                if (directIp != null) {
+                    Diag.log("p2p", "retry transfer over $directIp")
+                    result = g.client.send(peer.info, directIp, built, progress)
+                }
+            }
+
             sending.value = null
 
             if (result.isSuccess) {
@@ -161,17 +231,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun checkServer() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching { g.probeServer() }
-                .getOrElse { "Ошибка: ${it.javaClass.simpleName}: ${it.message}" }
-            Diag.log("probe", "manual check: $result")
-            withContext(Dispatchers.Main) { message.value = result }
-        }
-    }
-
-    fun setDeviceName(name: String) {
-        g.settings.setDeviceName(name)
+    private fun shouldTryP2p(error: Throwable?): Boolean {
+        val text = error?.message.orEmpty()
+        if (text.contains("отклонен", ignoreCase = true)) return false
+        return true
     }
 
     /** Вызывается плиткой быстрых настроек, когда Activity уже на экране. */
@@ -208,6 +271,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return clip.getItemAt(0).coerceToText(context)?.toString()
     }
 
+    fun setDeviceName(name: String) {
+        g.settings.setDeviceName(name)
+    }
+
     fun setServiceEnabled(enabled: Boolean) {
         g.settings.setServiceEnabled(enabled)
         if (enabled) RadarService.start(context) else RadarService.stop(context)
@@ -237,6 +304,46 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun revoke(id: String) {
         g.peers.revoke(id)
         message.value = "Устройство больше не доверенное"
+    }
+
+    // ── Для разработчиков ────────────────────────────────────────────────
+
+    fun setDeveloperMode(enabled: Boolean) = g.settings.setDeveloperMode(enabled)
+
+    fun setAutoSendReports(enabled: Boolean) = g.settings.setAutoSendReports(enabled)
+
+    fun checkServer() {
+        g.scope.launch {
+            val result = runCatching { g.probeServer() }
+                .getOrElse { "Ошибка: ${it.javaClass.simpleName}: ${it.message}" }
+            g.lastSelfCheck.value = result
+            Diag.log("probe", "manual check: $result")
+            message.value = result
+        }
+    }
+
+    fun saveLogs() {
+        g.scope.launch {
+            val path = runCatching { Diag.dump("manual") }.getOrNull()
+            message.value = path?.let { "Отчёт сохранён: $it" } ?: "Не удалось сохранить отчёт"
+        }
+    }
+
+    fun restartServer() {
+        g.scope.launch {
+            val state = g.restartServer()
+            message.value = "Сервер: $state"
+        }
+    }
+
+    fun serverStats(): String = buildString {
+        appendLine("Сервер: ${g.serverState.value}")
+        appendLine("Проверка: ${g.lastSelfCheck.value}")
+        appendLine("TLS-порт: 53530, веб: 53531")
+        appendLine("Устройств рядом: ${g.peers.discovered.value.size}")
+        appendLine("Доверенных: ${g.peers.trusted.value.count { !it.revoked }}")
+        appendLine("Передач в истории: ${g.history.entries.value.size}")
+        append("P2P: ${if (g.p2p.isSupported()) "доступен" else "нет"}")
     }
 
     private fun publishPortal() {

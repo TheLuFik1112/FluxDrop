@@ -51,6 +51,7 @@ class AppGraph(val app: Application) {
     val presenter by lazy { IncomingPresenter(app, this) }
     val client by lazy { TransferClient(this) }
     val server by lazy { TransferServer(this) }
+    val p2p by lazy { app.fluxdrop.discovery.P2pLink(app) }
 
     val discovery by lazy {
         PeerDiscovery(
@@ -63,7 +64,21 @@ class AppGraph(val app: Application) {
 
     val runtimeActive = MutableStateFlow(false)
 
+    val serverState = MutableStateFlow("остановлен")
+    val lastSelfCheck = MutableStateFlow("—")
+
     private var pruneJob: Job? = null
+
+    /** Тяжёлая инициализация: ключи, сертификат, префы, история. Только из фонового потока. */
+    suspend fun warmUp() {
+        val started = android.os.SystemClock.elapsedRealtime()
+        identity.identity
+        settings.deviceName.value
+        peers.trusted.value
+        history.entries.value
+        myPeerInfo()
+        Diag.log("app", "warmUp identity+data ${android.os.SystemClock.elapsedRealtime() - started} ms")
+    }
 
     fun myPeerInfo(): PeerInfo {
         val id = identity.identity
@@ -115,15 +130,25 @@ class AppGraph(val app: Application) {
         Diag.log("runtime", "start")
 
         runCatching { server.start() }
-            .onFailure { Diag.log("runtime", "server failed: $it") }
+            .onFailure {
+                serverState.value = "ошибка: ${it.javaClass.simpleName}"
+                Diag.log("runtime", "server failed: $it")
+            }
+        if (serverState.value != "ошибка") serverState.value = "работает"
         runCatching { discovery.start() }
             .onFailure { Diag.log("runtime", "discovery failed: $it") }
 
         scope.launch {
             delay(700)
             runCatching { probeServer() }
-                .onSuccess { Diag.log("probe", "self-check ok: $it") }
-                .onFailure { Diag.log("probe", "self-check failed: $it") }
+                .onSuccess {
+                    lastSelfCheck.value = it
+                    Diag.log("probe", "self-check ok: $it")
+                }
+                .onFailure {
+                    lastSelfCheck.value = "ошибка: ${it.message}"
+                    Diag.log("probe", "self-check failed: $it")
+                }
         }
 
         pruneJob?.cancel()
@@ -137,10 +162,29 @@ class AppGraph(val app: Application) {
 
     fun stopRuntime() {
         runtimeActive.value = false
+        serverState.value = "остановлен"
         Diag.log("runtime", "stop")
         pruneJob?.cancel()
         pruneJob = null
         discovery.stop()
         runCatching { server.stop() }
+    }
+
+    /** Перезапуск TLS-ретранслятора и HTTP-сервера без трогания службы. */
+    suspend fun restartServer(): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        Diag.log("runtime", "restart requested")
+        runCatching { server.stop() }
+        val result = runCatching { server.start() }
+        result.onFailure {
+            serverState.value = "ошибка: ${it.javaClass.simpleName}"
+            Diag.log("runtime", "restart failed: $it")
+        }
+        if (result.isSuccess) {
+            serverState.value = "работает"
+            delay(400)
+            val probe = runCatching { probeServer() }
+            lastSelfCheck.value = probe.getOrElse { "ошибка: ${it.message}" }
+        }
+        serverState.value
     }
 }

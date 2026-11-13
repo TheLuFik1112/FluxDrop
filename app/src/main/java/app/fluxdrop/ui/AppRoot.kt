@@ -60,6 +60,7 @@ fun AppRoot(viewModel: AppViewModel) {
     val trusted by viewModel.trusted.collectAsState()
     val history by viewModel.history.collectAsState()
     val portalUrl by viewModel.portalUrl.collectAsState()
+    val crash by viewModel.crash.collectAsState()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -75,6 +76,10 @@ fun AppRoot(viewModel: AppViewModel) {
                 add(Manifest.permission.BLUETOOTH_SCAN)
                 add(Manifest.permission.BLUETOOTH_ADVERTISE)
                 add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            // До Android 13 поиск по Wi-Fi Direct и BLE требует геолокации.
+            if (Build.VERSION.SDK_INT < 33) {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
             if (Build.VERSION.SDK_INT < 29) {
                 add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
@@ -141,5 +146,13 @@ fun AppRoot(viewModel: AppViewModel) {
 
     qrPayload?.let { payload ->
         QrDialog(payload = payload, onDismiss = { qrPayload = null })
+    }
+
+    crash?.let { pending ->
+        CrashDialog(
+            crash = pending,
+            onSend = viewModel::sendCrash,
+            onDismiss = viewModel::dismissCrash,
+        )
     }
 }
