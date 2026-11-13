@@ -9,6 +9,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * Минимальный «чёрный ящик»: держит последние строки журнала в памяти и при падении
@@ -20,16 +21,25 @@ object Diag {
     private const val FOLDER = "FluxDrop"
 
     private val lines = ArrayDeque<String>()
+    private val pending = ArrayDeque<String>()
     private var appContext: Context? = null
     private var installed = false
+
+    @Volatile
     private var logStream: java.io.OutputStream? = null
+
+    /** Единственный фоновый писатель: ни одна строка не пишется с главного потока. */
+    private val writer = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "fluxdrop-log").apply { isDaemon = true }
+    }
 
     fun install(context: Context) {
         appContext = context.applicationContext
         if (installed) return
         installed = true
 
-        openLogFile(context)
+        // Открытие файла — тоже в фоне: MediaStore.insert умеет думать десятки мс.
+        writer.execute { openLogFile(context) }
 
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
@@ -47,7 +57,24 @@ object Diag {
             lines.addLast(line)
             while (lines.size > MAX_LINES) lines.removeFirst()
         }
-        writeLine(line)
+        synchronized(pending) {
+            pending.addLast(line)
+            while (pending.size > MAX_LINES) pending.removeFirst()
+        }
+        // Запись в файл — только через фоновый поток.
+        writer.execute { flushPending() }
+    }
+
+    private fun flushPending() {
+        val batch = synchronized(pending) {
+            if (pending.isEmpty()) return
+            pending.toList().also { pending.clear() }
+        }
+        val stream = logStream ?: return
+        runCatching {
+            stream.write((batch.joinToString("\n") + "\n").toByteArray())
+            stream.flush()
+        }
     }
 
     /** Журнал прошлой сессии — чтобы понять, что было при старте, даже без падения. */
@@ -74,16 +101,6 @@ object Diag {
                 )
                 dir.mkdirs()
                 logStream = File(dir, name).outputStream()
-            }
-        }
-    }
-
-    private fun writeLine(line: String) {
-        val stream = logStream ?: return
-        runCatching {
-            synchronized(this) {
-                stream.write((line + "\n").toByteArray())
-                stream.flush()
             }
         }
     }
@@ -118,7 +135,6 @@ object Diag {
         }
 
         val name = "fluxdrop-$kind-${fileStamp()}.txt".replace(":", "-").replace(" ", "_")
-        runCatching { writeLine(body) }
         return runCatching { save(context, name, body) }.getOrElse { io ->
             log("diag", "save failed: $io")
             runCatching {
