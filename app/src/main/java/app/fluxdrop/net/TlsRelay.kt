@@ -64,21 +64,38 @@ class TlsRelay(
 
     private fun handle(client: Socket) {
         var upstream: Socket? = null
+        var step = "begin"
         try {
-            (client as? SSLSocket)?.startHandshake()
+            step = "inspect"
+            Diag.log(
+                "relay",
+                "conn in: local=$localPort remote=${client.inetAddress?.hostAddress}:${client.port} " +
+                    "connected=${client.isConnected} ssl=${client is SSLSocket}",
+            )
+
+            step = "handshake"
+            (client as? SSLSocket)?.let { ssl ->
+                ssl.useClientMode = false
+                ssl.startHandshake()
+            }
+            Diag.log("relay", "handshake ok")
+
+            step = "connect upstream"
             upstream = Socket().apply {
                 connect(InetSocketAddress("127.0.0.1", localPort), 5_000)
                 tcpNoDelay = true
             }
+            Diag.log("relay", "upstream connected")
 
             val target = upstream
+            step = "pump"
             Thread({ pump(client, target) }, "fluxdrop-tls-up").apply {
                 isDaemon = true
                 start()
             }
             pump(target, client)
         } catch (error: Exception) {
-            Diag.log("relay", "connection failed: $error")
+            Diag.log("relay", "failed at $step: ${error.stackTraceToString()}")
         } finally {
             runCatching { upstream?.close() }
             runCatching { client.close() }
