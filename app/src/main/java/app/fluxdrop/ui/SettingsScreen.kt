@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,6 +34,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -43,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.fluxdrop.core.APP_VERSION
@@ -70,6 +73,7 @@ fun SettingsScreen(
 
     var renameOpen by rememberSaveable { mutableStateOf(false) }
     var statsOpen by rememberSaveable { mutableStateOf(false) }
+    var logsOpen by rememberSaveable { mutableStateOf(false) }
     var overlayGranted by remember { mutableStateOf(hasOverlayPermission(context)) }
     var batteryOk by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
 
@@ -318,6 +322,12 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                     ) { Text("Статистика") }
                 }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { logsOpen = true },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Показать журнал") }
                 Spacer(Modifier.height(10.dp))
                 TextButton(
                     onClick = {
@@ -360,6 +370,10 @@ fun SettingsScreen(
         )
     }
 
+    if (logsOpen) {
+        LogsDialog(viewModel = viewModel, onDismiss = { logsOpen = false })
+    }
+
     if (statsOpen) {
         AlertDialog(
             onDismissRequest = { statsOpen = false },
@@ -375,6 +389,45 @@ fun SettingsScreen(
             },
         )
     }
+}
+
+/**
+ * Журнал читается только пока открыт этот диалог: поток запускается в
+ * LaunchedEffect и умирает вместе с композицией. Радар и настройки его не читают.
+ */
+@Composable
+private fun LogsDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("Читаю журнал…") }
+
+    LaunchedEffect(Unit) {
+        viewModel.logsFlow().collect { lines ->
+            text = lines.ifBlank { "Журнал пуст" }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Журнал") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Закрыть") }
+        },
+        dismissButton = {
+            TextButton(onClick = { viewModel.saveLogs() }) { Text("Сохранить в файл") }
+        },
+    )
 }
 
 @Composable

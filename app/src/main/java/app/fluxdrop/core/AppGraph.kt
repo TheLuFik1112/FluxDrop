@@ -4,7 +4,7 @@ import android.app.Application
 import app.fluxdrop.data.HistoryRepository
 import app.fluxdrop.data.PeerRepository
 import app.fluxdrop.data.SettingsRepository
-import app.fluxdrop.discovery.P2pLink
+import app.fluxdrop.discovery.WifiDirectManager
 import app.fluxdrop.discovery.PeerDiscovery
 import app.fluxdrop.net.IncomingCoordinator
 import app.fluxdrop.net.Portal
@@ -52,7 +52,7 @@ class AppGraph(val app: Application) {
     val presenter by lazy { IncomingPresenter(app, this) }
     val client by lazy { TransferClient(this) }
     val server by lazy { TransferServer(this) }
-    val p2p by lazy { P2pLink(app) }
+    val p2p by lazy { WifiDirectManager(app, scope) }
 
     val discovery by lazy {
         PeerDiscovery(

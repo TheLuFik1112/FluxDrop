@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Description
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +57,7 @@ import app.fluxdrop.core.QueueItem
 import app.fluxdrop.core.QueueKind
 import app.fluxdrop.core.formatBytes
 import app.fluxdrop.data.DiscoveredPeer
+import app.fluxdrop.discovery.WifiDirectReadiness
 
 @Composable
 fun HomeScreen(
@@ -61,6 +65,10 @@ fun HomeScreen(
     queue: List<QueueItem>,
     peers: List<DiscoveredPeer>,
     sending: SendState?,
+    isEngineReady: Boolean,
+    p2pReadiness: WifiDirectReadiness,
+    isActive: Boolean,
+    onFixP2p: () -> Unit,
     onPickFiles: () -> Unit,
     onPickFolder: () -> Unit,
     onShowQr: (String) -> Unit,
@@ -70,6 +78,15 @@ fun HomeScreen(
     val trustedIds by viewModel.trustedIds.collectAsState()
     val deviceName by viewModel.deviceName.collectAsState()
 
+    // Прямой поиск работает только пока открыт радар и есть готовность.
+    LaunchedEffect(isActive, isEngineReady, p2pReadiness) {
+        if (isActive && isEngineReady && p2pReadiness == WifiDirectReadiness.READY) {
+            viewModel.startP2pDiscovery()
+        } else if (!isActive) {
+            viewModel.stopP2pDiscovery()
+        }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -77,11 +94,18 @@ fun HomeScreen(
     ) {
         item {
             StatusCard(
-                deviceName = deviceName,
+                deviceName = deviceName.ifBlank { "FluxDrop" },
                 peerCount = peers.size,
                 portalUrl = portalUrl,
+                isEngineReady = isEngineReady,
                 onShowQr = { portalUrl?.let(onShowQr) },
             )
+        }
+
+        if (p2pReadiness == WifiDirectReadiness.MISSING_PERMISSIONS ||
+            p2pReadiness == WifiDirectReadiness.LOCATION_DISABLED
+        ) {
+            item { P2pNotice(p2pReadiness = p2pReadiness, onFix = onFixP2p) }
         }
 
         item {
@@ -133,7 +157,7 @@ fun HomeScreen(
             PeerRow(
                 peer = peer,
                 trusted = peer.info.id in trustedIds,
-                enabled = queue.isNotEmpty() && sending == null && peer.canSend,
+                enabled = queue.isNotEmpty() && sending == null,
                 onSend = { viewModel.sendTo(peer) },
             )
         }
@@ -152,11 +176,66 @@ fun HomeScreen(
     }
 }
 
+/**
+ * Плашка «почему не работает прямой поиск» с кнопкой исправления.
+ * Android 12 без включённой геолокации вообще не отдаёт список Wi-Fi Direct.
+ */
+@Composable
+private fun P2pNotice(readiness: WifiDirectReadiness, onFix: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Rounded.ErrorOutline,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Прямой поиск выключен",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    when (readiness) {
+                        WifiDirectReadiness.LOCATION_DISABLED ->
+                            "Включите геолокацию: без неё Android не ищет устройства " +
+                                "по Wi-Fi Direct."
+
+                        else ->
+                            "Нужны разрешения «Устройства поблизости» и " +
+                                "«Местоположение», иначе поиск не запустится."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onFix) {
+                Text(
+                    if (readiness == WifiDirectReadiness.LOCATION_DISABLED) "Настройки" else "Разрешить",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun StatusCard(
     deviceName: String,
     peerCount: Int,
     portalUrl: String?,
+    isEngineReady: Boolean,
     onShowQr: () -> Unit,
 ) {
     Surface(
@@ -173,11 +252,19 @@ private fun StatusCard(
                         .background(MaterialTheme.colorScheme.primary),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        Icons.Rounded.Wifi,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                    )
+                    if (isEngineReady) {
+                        Icon(
+                            Icons.Rounded.Wifi,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    } else {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    }
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -187,7 +274,11 @@ private fun StatusCard(
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                     Text(
-                        if (peerCount > 0) "Рядом устройств: $peerCount" else "Ожидаю устройства рядом",
+                        when {
+                            !isEngineReady -> "Готовим соединение…"
+                            peerCount > 0 -> "Рядом устройств: $peerCount"
+                            else -> "Ожидаю устройства рядом"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
                     )

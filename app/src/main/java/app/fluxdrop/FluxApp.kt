@@ -4,12 +4,10 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
-import android.os.SystemClock
 import app.fluxdrop.core.AppGraph
 import app.fluxdrop.core.CrashReporter
 import app.fluxdrop.core.Diag
 import app.fluxdrop.service.RadarService
-import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicInteger
 
 class FluxApp : Application() {
@@ -21,6 +19,11 @@ class FluxApp : Application() {
 
     val isInForeground: Boolean get() = startedActivities.get() > 0
 
+    /**
+     * Здесь НЕТ и не должно быть ничего тяжёлого: ни KeyStore, ни генерации
+     * сертификатов, ни сокетов, ни startForegroundService. Всё это делает
+     * AppViewModel после первой отрисовки кадра.
+     */
     override fun onCreate() {
         super.onCreate()
 
@@ -28,7 +31,7 @@ class FluxApp : Application() {
         CrashReporter.install(this)
         Diag.log("app", "onCreate")
 
-        // Граф создаётся мгновенно: внутри только ленивые поля, никакой работы.
+        // Только пустые обёртки: внутри все поля ленивые и ничего не делают.
         graph = AppGraph(this)
 
         registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
@@ -47,25 +50,23 @@ class FluxApp : Application() {
             override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
             override fun onActivityDestroyed(activity: android.app.Activity) = Unit
         })
+    }
 
-        // Каналы уведомлений нужны до старта службы и стоят доли миллисекунды.
+    /**
+     * Запускается из фона (Dispatchers.IO) уже после первого кадра.
+     * Безопасно вызывать повторно: служба и каналы создаются один раз.
+     */
+    fun startRadarServiceIfEnabled() {
         runCatching { createChannels() }
             .onFailure { Diag.log("app", "channels failed: $it") }
 
-        if (graph.settings.serviceEnabled.value) {
-            Diag.log("app", "starting radar service")
-            runCatching { RadarService.start(this) }
-                .onFailure { Diag.log("app", "service start failed: $it") }
+        if (!graph.settings.serviceEnabled.value) {
+            Diag.log("app", "служба выключена в настройках")
+            return
         }
-
-        // Тяжёлая инициализация (ключи, сертификат, префы, сокеты) — только в фоне,
-        // чтобы первый кадр UI появлялся сразу.
-        graph.scope.launch {
-            val startedAt = SystemClock.elapsedRealtime()
-            runCatching { graph.warmUp() }
-                .onFailure { Diag.log("app", "warmUp failed: $it") }
-            Diag.log("app", "warmUp ${SystemClock.elapsedRealtime() - startedAt} ms")
-        }
+        Diag.log("app", "starting radar service")
+        runCatching { RadarService.start(this) }
+            .onFailure { Diag.log("app", "service start failed: $it") }
     }
 
     private fun createChannels() {

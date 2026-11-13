@@ -12,21 +12,33 @@ import app.fluxdrop.ui.AppRoot
 import app.fluxdrop.ui.AppViewModel
 import app.fluxdrop.ui.FluxTheme
 
+/**
+ * Единственная задача Activity — показать первый кадр.
+ * Ключи, сертификаты, сокеты и служба стартуют из AppViewModel в фоне.
+ */
 class MainActivity : ComponentActivity() {
 
     private val viewModel: AppViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Сплэш должен быть установлен до super.onCreate — это требование библиотеки.
         installSplashScreen()
         super.onCreate(savedInstanceState)
         Diag.log("ui", "MainActivity.onCreate")
         enableEdgeToEdge()
+
         setContent {
             FluxTheme {
                 AppRoot(viewModel)
             }
         }
         handleIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Пользователь мог вернуться из настроек геолокации/разрешений.
+        viewModel.onResume()
     }
 
     override fun onNewIntent(intent: Intent) {
