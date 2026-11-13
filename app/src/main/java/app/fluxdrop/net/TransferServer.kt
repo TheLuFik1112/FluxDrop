@@ -6,6 +6,7 @@ import app.fluxdrop.core.APP_VERSION
 import app.fluxdrop.core.AppGraph
 import app.fluxdrop.core.FileMeta
 import app.fluxdrop.core.ResumeState
+import app.fluxdrop.core.TLS_LOCAL_PORT
 import app.fluxdrop.core.TLS_PORT
 import app.fluxdrop.core.TransferOffer
 import app.fluxdrop.core.WEB_PORT
@@ -20,7 +21,6 @@ import io.ktor.server.cio.CIOApplicationEngine
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
-import io.ktor.server.engine.sslConnector
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
@@ -41,22 +41,21 @@ import io.ktor.utils.io.readRemaining
 class TransferServer(private val g: AppGraph) {
 
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
+    private var relay: TlsRelay? = null
 
     fun start() {
         if (server != null) return
-        val (keyStore, pass) = g.identity.serverKeyStore()
+
+        val tls = TlsRelay(g.identity.serverSslContext(), TLS_PORT, TLS_LOCAL_PORT)
+        tls.start()
+        relay = tls
 
         server = embeddedServer(
             factory = CIO,
             configure = {
-                sslConnector(
-                    keyStore = keyStore,
-                    keyAlias = "identity",
-                    keyStorePassword = { pass },
-                    privateKeyPassword = { pass },
-                ) {
-                    host = "0.0.0.0"
-                    port = TLS_PORT
+                connector {
+                    host = "127.0.0.1"
+                    port = TLS_LOCAL_PORT
                 }
                 connector {
                     host = "0.0.0.0"
@@ -70,6 +69,8 @@ class TransferServer(private val g: AppGraph) {
     fun stop() {
         runCatching { server?.stop(500, 1500) }
         server = null
+        runCatching { relay?.stop() }
+        relay = null
     }
 
     private fun Application.module() {
