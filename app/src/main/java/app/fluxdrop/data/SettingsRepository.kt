@@ -1,0 +1,66 @@
+package app.fluxdrop.data
+
+import android.content.Context
+import android.os.Build
+import kotlinx.coroutines.flow.MutableStateFlow
+
+class SettingsRepository(private val context: Context) {
+
+    private val prefs = context.getSharedPreferences("fluxdrop.settings", Context.MODE_PRIVATE)
+
+    private val defaultName: String =
+        (Build.MODEL ?: "Android").replaceFirstChar { it.uppercase() }.ifBlank { "Android" }
+
+    val deviceName = MutableStateFlow(prefs.getString(KEY_NAME, defaultName) ?: defaultName)
+    val serviceEnabled = MutableStateFlow(prefs.getBoolean(KEY_SERVICE, true))
+    val autoAcceptTrusted = MutableStateFlow(prefs.getBoolean(KEY_AUTO, true))
+    val portalEnabled = MutableStateFlow(prefs.getBoolean(KEY_PORTAL, false))
+    val overlayPromptShown = MutableStateFlow(prefs.getBoolean(KEY_OVERLAY_PROMPT, false))
+
+    fun setDeviceName(value: String) {
+        val clean = value.trim().take(40).ifBlank { defaultName }
+        deviceName.value = clean
+        prefs.edit().putString(KEY_NAME, clean).apply()
+    }
+
+    fun setServiceEnabled(value: Boolean) {
+        serviceEnabled.value = value
+        prefs.edit().putBoolean(KEY_SERVICE, value).apply()
+    }
+
+    fun setAutoAcceptTrusted(value: Boolean) {
+        autoAcceptTrusted.value = value
+        prefs.edit().putBoolean(KEY_AUTO, value).apply()
+    }
+
+    fun setPortalEnabled(value: Boolean) {
+        portalEnabled.value = value
+        prefs.edit().putBoolean(KEY_PORTAL, value).apply()
+    }
+
+    fun markOverlayPromptShown() {
+        overlayPromptShown.value = true
+        prefs.edit().putBoolean(KEY_OVERLAY_PROMPT, true).apply()
+    }
+
+    fun portalToken(): String =
+        prefs.getString(KEY_TOKEN, null) ?: newToken().also {
+            prefs.edit().putString(KEY_TOKEN, it).apply()
+        }
+
+    fun newToken(): String {
+        val alphabet = "abcdefghijkmnpqrstuvwxyz23456789"
+        val token = (1..10).map { alphabet.random() }.joinToString("")
+        prefs.edit().putString(KEY_TOKEN, token).apply()
+        return token
+    }
+
+    private companion object {
+        const val KEY_NAME = "device_name"
+        const val KEY_SERVICE = "service_enabled"
+        const val KEY_AUTO = "auto_accept"
+        const val KEY_PORTAL = "portal_enabled"
+        const val KEY_TOKEN = "portal_token"
+        const val KEY_OVERLAY_PROMPT = "overlay_prompt"
+    }
+}
