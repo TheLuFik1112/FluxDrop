@@ -494,7 +494,7 @@ class NearbyP2pManager(
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
-            val waiter = payloadWaiters[update.id]
+            val waiter = payloadWaiters[update.payloadId]
             when (update.status) {
                 PayloadTransferUpdate.Status.SUCCESS -> waiter?.complete(true)
                 PayloadTransferUpdate.Status.FAILURE -> {

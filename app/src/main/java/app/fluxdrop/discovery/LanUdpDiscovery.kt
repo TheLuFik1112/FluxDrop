@@ -196,8 +196,8 @@ class LanUdpDiscovery(
 
     /** Все адреса /24 вокруг наших IPv4 — для unicast-обхода. */
     private fun hostAddresses(): List<InetAddress> = interfaces().flatMap { nif ->
-        nif.interfaceAddresses.mapNotNull { iface ->
-            val ip = iface.address as? Inet4Address ?: return@mapNotNull null
+        nif.interfaceAddresses.flatMap { iface ->
+            val ip = iface.address as? Inet4Address ?: return@flatMap emptyList<InetAddress>()
             val bytes = ip.address
             (1..MAX_SWEEP_HOSTS).mapNotNull { host ->
                 runCatching {
