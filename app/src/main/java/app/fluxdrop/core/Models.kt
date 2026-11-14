@@ -6,10 +6,9 @@ import kotlinx.serialization.Serializable
 
 const val TLS_PORT = 53530
 const val WEB_PORT = 53531
-const val DISCOVERY_PORT = 53532
 const val TLS_LOCAL_PORT = 53533
 const val CHUNK_SIZE = 4 * 1024 * 1024
-const val APP_VERSION = "0.2.2"
+const val APP_VERSION = "0.3.0"
 
 @Serializable
 @Immutable

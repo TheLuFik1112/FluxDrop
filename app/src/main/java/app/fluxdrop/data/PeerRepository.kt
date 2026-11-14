@@ -17,7 +17,7 @@ data class DiscoveredPeer(
     val lastSeen: Long,
     val source: String,   // "udp" | "nsd" | "ble"
 ) {
-    val canSend: Boolean get() = ip.isNotBlank()
+    val canSend: Boolean get() = ip.isNotBlank() || source == "nearby"
 }
 
 class PeerRepository(context: Context, private val json: Json) {
@@ -50,6 +50,13 @@ class PeerRepository(context: Context, private val json: Json) {
         )
         _discovered.value = (current.filterNot { it.info.id == info.id } + merged)
             .sortedByDescending { it.lastSeen }
+    }
+
+    /** Убирает находку конкретного канала (например, Nearby-устройство ушло). */
+    @Synchronized
+    fun onPeerLost(id: String, source: String) {
+        val filtered = _discovered.value.filterNot { it.info.id == id && it.source == source }
+        if (filtered.size != _discovered.value.size) _discovered.value = filtered
     }
 
     @Synchronized

@@ -16,8 +16,8 @@ android {
         applicationId = "app.fluxdrop"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.2.2"
+        versionCode = 10
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -93,6 +93,10 @@ dependencies {
 
     implementation("org.bouncycastle:bcpkix-jdk18on:1.80")
     implementation("com.google.zxing:core:3.5.3")
+
+    // Офлайн-поиск и передача без роутера (BLE + Wi-Fi под капотом).
+    implementation("com.google.android.gms:play-services-nearby:19.3.0")
+    implementation("com.google.android.gms:play-services-base:18.5.0")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

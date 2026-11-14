@@ -21,7 +21,10 @@ import app.fluxdrop.core.QueueKind
 import app.fluxdrop.core.TrustedPeer
 import app.fluxdrop.data.DiscoveredPeer
 import app.fluxdrop.data.PeerRepository
-import app.fluxdrop.discovery.WifiDirectReadiness
+import app.fluxdrop.discovery.NearbyEvent
+import app.fluxdrop.discovery.NearbyItem
+import app.fluxdrop.discovery.NearbyProgress
+import app.fluxdrop.discovery.NearbyRequest
 import app.fluxdrop.net.PortalFile
 import app.fluxdrop.service.RadarService
 import kotlinx.coroutines.Dispatchers
@@ -63,8 +66,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _engineError = MutableStateFlow<String?>(null)
     val engineError: StateFlow<String?> = _engineError.asStateFlow()
 
-    private val _p2pReadiness = MutableStateFlow(WifiDirectReadiness.UNKNOWN)
-    val p2pReadiness: StateFlow<WifiDirectReadiness> = _p2pReadiness.asStateFlow()
+    /** Входящий запрос Nearby — показываем шторку. */
+    private val _nearbyIncoming = MutableStateFlow<NearbyRequest?>(null)
+    val nearbyIncoming: StateFlow<NearbyRequest?> = _nearbyIncoming.asStateFlow()
+
+    /** Nearby работает только с Google Play Services (на Huawei их нет). */
+    val nearbyEnabled = MutableStateFlow(false)
+
+    val nearbyProgress = MutableStateFlow<NearbyProgress?>(null)
 
     // ── состояние экранов (без обращения к диску) ────────────────────────
 
@@ -90,8 +99,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _crash = MutableStateFlow<PendingCrash?>(null)
     val crash: StateFlow<PendingCrash?> = _crash.asStateFlow()
-
-    private var p2pSupported = true
 
     init {
         // Никаких сертификатов, KeyStore, сокетов и prefs. Только запись в журнал.
@@ -121,7 +128,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             bindSettings()
             bindRepositories()
             loadPendingCrash()
-            refreshP2pReadinessBlocking()
+            nearbyEnabled.value = runCatching { g.nearby.isAvailable() }.getOrDefault(false)
 
             _isEngineReady.value = true
             Diag.log(
@@ -176,6 +183,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch(Dispatchers.IO) {
                 g.lastSelfCheck.collect { lastSelfCheck.value = it }
             }
+            viewModelScope.launch(Dispatchers.IO) {
+                g.nearby.incoming.collect { _nearbyIncoming.value = it }
+            }
+            viewModelScope.launch(Dispatchers.IO) {
+                g.nearby.progress.collect { nearbyProgress.value = it }
+            }
+            viewModelScope.launch(Dispatchers.IO) {
+                g.nearby.events.collect { event -> event?.let { handleNearbyEvent(it) } }
+            }
         }.onFailure { fail("Данные", it) }
     }
 
@@ -215,47 +231,99 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         message.value = null
     }
 
-    // ── Wi-Fi Direct ─────────────────────────────────────────────────────
+    // ── Nearby (без роутера) ─────────────────────────────────────────────
 
-    fun onResume() {
-        refreshP2pReadiness()
+    /** Пользователь нажал «Принять» в шторке входящего запроса Nearby. */
+    fun acceptNearby() {
+        val request = _nearbyIncoming.value ?: return
+        _nearbyIncoming.value = null
+        g.nearby.accept(request.endpointId)
+        message.value = "Соединяемся с ${request.name}…"
     }
 
-    fun refreshP2pReadiness() {
-        viewModelScope.launch(Dispatchers.IO) { refreshP2pReadinessBlocking() }
+    fun declineNearby() {
+        val request = _nearbyIncoming.value ?: return
+        _nearbyIncoming.value = null
+        g.nearby.decline(request.endpointId)
+        message.value = "Запрос отклонён"
     }
 
-    private fun refreshP2pReadinessBlocking() {
-        val readiness = runCatching { g.p2p.readiness() }
-            .getOrDefault(WifiDirectReadiness.UNKNOWN)
-        p2pSupported = readiness != WifiDirectReadiness.UNSUPPORTED
-        _p2pReadiness.value = readiness
+    fun dismissNearbyProgress() {
+        nearbyProgress.value = null
     }
 
-    /** Пока открыт экран радара — вещаем о себе и перезапускаем поиск каждые 15 с. */
-    fun startP2pDiscovery() {
-        if (!_isEngineReady.value) return
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                g.p2p.startDiscovery(deviceName.value.ifBlank { "FluxDrop" })
-            }.onFailure { Diag.log("p2p", "startDiscovery failed: $it") }
+    private suspend fun handleNearbyEvent(event: NearbyEvent) {
+        when (event) {
+            is NearbyEvent.Text -> {
+                withContext(Dispatchers.Main) {
+                    runCatching {
+                        val manager = context.getSystemService(ClipboardManager::class.java)
+                        manager?.setPrimaryClip(
+                            android.content.ClipData.newPlainText("FluxDrop", event.text)
+                        )
+                    }
+                }
+                g.history.add(
+                    HistoryEntry(
+                        id = java.util.UUID.randomUUID().toString(),
+                        direction = "in",
+                        peerName = event.peerName,
+                        summary = "Текст, ${event.text.length} симв.",
+                        bytes = event.text.length.toLong(),
+                        files = 1,
+                        timestamp = System.currentTimeMillis(),
+                        status = "ok",
+                    )
+                )
+                nearbyProgress.value = null
+                message.value = "Текст от ${event.peerName} скопирован в буфер"
+            }
+
+            is NearbyEvent.FileSaved -> {
+                g.history.add(
+                    HistoryEntry(
+                        id = java.util.UUID.randomUUID().toString(),
+                        direction = "in",
+                        peerName = event.peerName,
+                        summary = "Файл по Nearby",
+                        bytes = event.bytes,
+                        files = 1,
+                        timestamp = System.currentTimeMillis(),
+                        status = "ok",
+                    )
+                )
+                nearbyProgress.value = null
+                message.value = if (event.path.isBlank()) {
+                    "Файл от ${event.peerName} получен, но не сохранился"
+                } else {
+                    "Файл от ${event.peerName} сохранён в Download/FluxDrop"
+                }
+            }
+
+            is NearbyEvent.Failed -> {
+                nearbyProgress.value = null
+                message.value = "Nearby: ${event.reason}"
+            }
+        }
+        g.nearby.consumeEvent()
+    }
+
+    /** Пакет для Nearby: текст и файлы. Папки умеет только LAN-канал. */
+    private fun nearbyItems(): List<NearbyItem> = queue.value.mapNotNull { item ->
+        when (item.kind) {
+            QueueKind.TEXT -> item.text?.takeIf { it.isNotBlank() }
+                ?.let { NearbyItem.Text(it) }
+
+            QueueKind.FILE -> item.uri?.let { NearbyItem.FileItem(it, item.name) }
+
+            QueueKind.FOLDER -> null
         }
     }
 
-    fun stopP2pDiscovery() {
-        if (!_isEngineReady.value) return
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { g.p2p.stopDiscovery() }
-        }
+    private fun shouldFallbackToNearby(error: Throwable?): Boolean {
+        val text = error?.message.orEmpty()
+        return !text.contains("отклонен", ignoreCase = true)
     }
-
-    /** Намерение для исправления проблемы: настройки геолокации или приложения. */
-    fun p2pFixIntent(): Intent = runCatching { g.p2p.settingsIntent() }
-        .getOrElse {
-            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                .setData(Uri.fromParts("package", context.packageName, null))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
 
     // ── журнал (только для раздела «Для разработчиков») ──────────────────
 
@@ -349,39 +417,51 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        val hasFolder = queue.value.any { it.kind == QueueKind.FOLDER }
+        if (peer.ip.isBlank() && hasFolder) {
+            message.value = "Папки передаются только по Wi-Fi. Подключите телефоны к одной сети"
+            return
+        }
+
         viewModelScope.launch {
-            val built = withContext(Dispatchers.Default) {
-                PayloadBuilder.build(context, queue.value)
-            }
-            if (built == null) {
-                message.value = "Нечего отправлять"
-                return@launch
-            }
-
-            val progress: (Float, String) -> Unit = { fraction, text ->
-                sending.value = SendState(peer.info.name, fraction, text)
-            }
-
             sending.value = SendState(peer.info.name, 0f, "Подключение…")
-            var result = if (peer.ip.isBlank()) {
+
+            // 1. LAN (TLS) — приоритетный и самый быстрый канал.
+            var result: Result<Unit> = if (peer.ip.isBlank()) {
                 Result.failure(java.io.IOException("нет общего Wi-Fi"))
             } else {
-                g.client.send(peer.info, peer.ip, built, progress)
+                val built = withContext(Dispatchers.Default) {
+                    PayloadBuilder.build(context, queue.value)
+                }
+                if (built == null) {
+                    sending.value = null
+                    message.value = "Нечего отправлять"
+                    return@launch
+                }
+                g.client.send(peer.info, peer.ip, built) { fraction, text ->
+                    sending.value = SendState(peer.info.name, fraction, text)
+                }
             }
 
-            // Обычный путь не сработал — поднимаем прямое соединение по Wi-Fi Direct.
-            if (result.isFailure && shouldTryP2p(result.exceptionOrNull())) {
-                sending.value = SendState(peer.info.name, 0f, "Прямое соединение…")
-                val directIp = runCatching {
-                    withContext(Dispatchers.IO) { g.p2p.ensureLink(peer.info.name) }
-                }.getOrNull()
-                if (directIp != null) {
-                    Diag.log("p2p", "повтор передачи через $directIp")
-                    result = g.client.send(peer.info, directIp, built, progress)
+            // 2. Nearby — если LAN не удался, роутера нет или сеть режет пакеты.
+            if (result.isFailure && shouldFallbackToNearby(result.exceptionOrNull())) {
+                val items = nearbyItems()
+                if (items.isNotEmpty() && items.size == queue.value.size &&
+                    g.nearby.isKnown(peer.info.id)
+                ) {
+                    sending.value = SendState(peer.info.name, 0f, "Прямое соединение…")
+                    result = g.nearby.send(peer.info.id, items) { fraction, text ->
+                        sending.value = SendState(peer.info.name, fraction, text)
+                    }
+                } else if (hasFolder) {
+                    sending.value = null
+                    message.value = "Папки передаются только по Wi-Fi"
+                    return@launch
                 }
             }
 
             sending.value = null
+            nearbyProgress.value = null
 
             if (result.isSuccess) {
                 queue.value = emptyList()
@@ -391,11 +471,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 message.value = result.exceptionOrNull()?.message ?: "Не удалось отправить"
             }
         }
-    }
-
-    private fun shouldTryP2p(error: Throwable?): Boolean {
-        val text = error?.message.orEmpty()
-        return !text.contains("отклонен", ignoreCase = true)
     }
 
     /** Вызывается плиткой быстрых настроек, когда Activity уже на экране. */
@@ -421,22 +496,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            var result = if (target.ip.isBlank()) {
-                Result.failure<Unit>(java.io.IOException("нет общего Wi-Fi"))
+            var result: Result<Unit> = if (target.ip.isBlank()) {
+                Result.failure(java.io.IOException("нет общего Wi-Fi"))
             } else {
                 g.client.sendText(target.info, target.ip, text)
             }
 
-            if (result.isFailure) {
+            // Роутера рядом нет — отправляем текст через Nearby.
+            if (result.isFailure && shouldFallbackToNearby(result.exceptionOrNull()) &&
+                g.nearby.isKnown(target.info.id)
+            ) {
                 sending.value = SendState(target.info.name, 0f, "Прямое соединение…")
-                val directIp = runCatching {
-                    withContext(Dispatchers.IO) { g.p2p.ensureLink(target.info.name) }
-                }.getOrNull()
-                sending.value = null
-                if (directIp != null) {
-                    result = g.client.sendText(target.info, directIp, text)
+                result = g.nearby.send(
+                    deviceId = target.info.id,
+                    items = listOf(NearbyItem.Text(text)),
+                ) { fraction, stage ->
+                    sending.value = SendState(target.info.name, fraction, stage)
                 }
             }
+            sending.value = null
+            nearbyProgress.value = null
 
             message.value = if (result.isSuccess) {
                 "Отправлено: ${target.info.name}"
@@ -543,8 +622,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         appendLine("Устройств рядом: ${peers.value.size}")
         appendLine("Доверенных: ${trusted.value.count { !it.revoked }}")
         appendLine("Передач в истории: ${history.value.size}")
-        appendLine("P2P: ${if (p2pSupported) "доступен" else "нет"}")
-        append("Wi-Fi Direct: ${p2pReadiness.value}")
+        appendLine("LAN: UDP 53531")
+        append("Nearby: ${if (nearbyEnabled.value) "доступен" else "нет (нет Play Services)"}")
     }
 
     private fun publishPortal() {

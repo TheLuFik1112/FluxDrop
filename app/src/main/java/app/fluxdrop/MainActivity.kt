@@ -35,12 +35,6 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
-    override fun onResume() {
-        super.onResume()
-        // Пользователь мог вернуться из настроек геолокации/разрешений.
-        viewModel.onResume()
-    }
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

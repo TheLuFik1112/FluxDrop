@@ -4,7 +4,7 @@ import android.app.Application
 import app.fluxdrop.data.HistoryRepository
 import app.fluxdrop.data.PeerRepository
 import app.fluxdrop.data.SettingsRepository
-import app.fluxdrop.discovery.WifiDirectManager
+import app.fluxdrop.discovery.NearbyP2pManager
 import app.fluxdrop.discovery.PeerDiscovery
 import app.fluxdrop.net.IncomingCoordinator
 import app.fluxdrop.net.Portal
@@ -52,7 +52,24 @@ class AppGraph(val app: Application) {
     val presenter by lazy { IncomingPresenter(app, this) }
     val client by lazy { TransferClient(this) }
     val server by lazy { TransferServer(this) }
-    val p2p by lazy { WifiDirectManager(app, scope) }
+    /** Контур 2: поиск и передача без роутера. */
+    val nearby by lazy {
+        NearbyP2pManager(
+            context = app,
+            scope = scope,
+            selfId = { identity.identity.id },
+            selfName = { settings.deviceName.value },
+            isTrusted = { id -> peers.trusted.value.any { it.id == id && !it.revoked } },
+            onPeer = { peer ->
+                peers.onDiscovered(
+                    PeerInfo(id = peer.deviceId, name = peer.name, certFingerprint = peer.deviceId),
+                    ip = "",
+                    source = "nearby",
+                )
+            },
+            onPeerLost = { id -> peers.onPeerLost(id, "nearby") },
+        )
+    }
 
     val discovery by lazy {
         PeerDiscovery(
@@ -137,7 +154,9 @@ class AppGraph(val app: Application) {
             }
         if (serverState.value != "ошибка") serverState.value = "работает"
         runCatching { discovery.start() }
-            .onFailure { Diag.log("runtime", "discovery failed: $it") }
+            .onFailure { Diag.log("runtime", "LAN discovery failed: $it") }
+        runCatching { nearby.start() }
+            .onFailure { Diag.log("runtime", "nearby start failed: $it") }
 
         scope.launch {
             delay(700)
@@ -168,6 +187,7 @@ class AppGraph(val app: Application) {
         pruneJob?.cancel()
         pruneJob = null
         discovery.stop()
+        runCatching { nearby.stop() }
         runCatching { server.stop() }
     }
 

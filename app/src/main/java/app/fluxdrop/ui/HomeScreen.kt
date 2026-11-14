@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Description
@@ -57,7 +56,6 @@ import app.fluxdrop.core.QueueItem
 import app.fluxdrop.core.QueueKind
 import app.fluxdrop.core.formatBytes
 import app.fluxdrop.data.DiscoveredPeer
-import app.fluxdrop.discovery.WifiDirectReadiness
 
 @Composable
 fun HomeScreen(
@@ -66,9 +64,6 @@ fun HomeScreen(
     peers: List<DiscoveredPeer>,
     sending: SendState?,
     isEngineReady: Boolean,
-    p2pReadiness: WifiDirectReadiness,
-    isActive: Boolean,
-    onFixP2p: () -> Unit,
     onPickFiles: () -> Unit,
     onPickFolder: () -> Unit,
     onShowQr: (String) -> Unit,
@@ -77,15 +72,6 @@ fun HomeScreen(
     val portalUrl by viewModel.portalUrl.collectAsState()
     val trustedIds by viewModel.trustedIds.collectAsState()
     val deviceName by viewModel.deviceName.collectAsState()
-
-    // Прямой поиск работает только пока открыт радар и есть готовность.
-    LaunchedEffect(isActive, isEngineReady, p2pReadiness) {
-        if (isActive && isEngineReady && p2pReadiness == WifiDirectReadiness.READY) {
-            viewModel.startP2pDiscovery()
-        } else if (!isActive) {
-            viewModel.stopP2pDiscovery()
-        }
-    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -100,12 +86,6 @@ fun HomeScreen(
                 isEngineReady = isEngineReady,
                 onShowQr = { portalUrl?.let(onShowQr) },
             )
-        }
-
-        if (p2pReadiness == WifiDirectReadiness.MISSING_PERMISSIONS ||
-            p2pReadiness == WifiDirectReadiness.LOCATION_DISABLED
-        ) {
-            item { P2pNotice(readiness = p2pReadiness, onFix = onFixP2p) }
         }
 
         item {
@@ -143,8 +123,8 @@ fun HomeScreen(
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "Откройте FluxDrop на втором устройстве рядом. " +
-                                "Общая Wi-Fi сеть не обязательна: если её нет, приложение " +
-                                "подключится напрямую по Wi-Fi Direct.",
+                                "Общая Wi-Fi сеть не обязательна: без роутера устройства " +
+                                "найдут друг друга через Google Nearby.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -173,60 +153,6 @@ fun HomeScreen(
                 showTextDialog = false
             },
         )
-    }
-}
-
-/**
- * Плашка «почему не работает прямой поиск» с кнопкой исправления.
- * Android 12 без включённой геолокации вообще не отдаёт список Wi-Fi Direct.
- */
-@Composable
-private fun P2pNotice(readiness: WifiDirectReadiness, onFix: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.errorContainer,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Rounded.ErrorOutline,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "Прямой поиск выключен",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    when (readiness) {
-                        WifiDirectReadiness.LOCATION_DISABLED ->
-                            "Включите геолокацию: без неё Android не ищет устройства " +
-                                "по Wi-Fi Direct."
-
-                        else ->
-                            "Нужны разрешения «Устройства поблизости» и " +
-                                "«Местоположение», иначе поиск не запустится."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            TextButton(onClick = onFix) {
-                Text(
-                    if (readiness == WifiDirectReadiness.LOCATION_DISABLED) "Настройки" else "Разрешить",
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-        }
     }
 }
 
@@ -491,7 +417,8 @@ private fun PeerRow(
                 Text(
                     when {
                         peer.ip.isNotBlank() -> "${peer.ip} • ${peer.source.uppercase()}"
-                        else -> "Bluetooth • нет общего Wi-Fi"
+                        peer.source == "nearby" -> "Nearby • без роутера"
+                        else -> "поиск…"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
